@@ -1,0 +1,23 @@
+## .NET
+*.user
+*.suo
+.vs/
+bin/
+obj/
+*.userprefs
+.idea/
+
+## Logs
+logs/
+*.log
+
+## Migrations (keep or remove depending on preference)
+# */Migrations/
+
+## Secrets
+appsettings.*.json
+!appsettings.Development.json
+
+## OS
+.DS_Store
+Thumbs.db
