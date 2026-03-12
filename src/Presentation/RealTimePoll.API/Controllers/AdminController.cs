@@ -2,10 +2,9 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using RealTimePoll.Application.DTOs.Auth;
 using RealTimePoll.Application.DTOs.Poll;
 using RealTimePoll.Application.Interfaces;
-using RealTimePoll.Domain.Entities;
+using RealTimePoll.Infrastructure.Identity;
 
 namespace RealTimePoll.API.Controllers;
 
@@ -16,12 +15,12 @@ namespace RealTimePoll.API.Controllers;
 public class AdminController : ControllerBase
 {
     private readonly IPollService _pollService;
-    private readonly UserManager<AppUser> _userManager;
+    private readonly UserManager<AppIdentityUser> _userManager;
     private readonly RoleManager<IdentityRole<Guid>> _roleManager;
 
     public AdminController(
         IPollService pollService,
-        UserManager<AppUser> userManager,
+        UserManager<AppIdentityUser> userManager,
         RoleManager<IdentityRole<Guid>> roleManager)
     {
         _pollService = pollService;

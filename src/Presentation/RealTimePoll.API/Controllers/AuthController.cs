@@ -159,19 +159,4 @@ public class AuthController : ControllerBase
     }
 }
 
-// ── Shared API Response Wrapper ───────────────────────────────────────────────
 
-public record ApiResponse<T>
-{
-    public bool Success { get; init; }
-    public T? Data { get; init; }
-    public string? Message { get; init; }
-    public IEnumerable<string>? Errors { get; init; }
-    public DateTime Timestamp { get; init; } = DateTime.UtcNow;
-
-    public static ApiResponse<T> Success(T? data, string? message = null)
-        => new() { Success = true, Data = data, Message = message };
-
-    public static ApiResponse<T> Fail(IEnumerable<string> errors, string? message = null)
-        => new() { Success = false, Errors = errors, Message = message };
-}

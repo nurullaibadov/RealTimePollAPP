@@ -5,8 +5,8 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.IdentityModel.Tokens;
 using RealTimePoll.Application.Interfaces;
-using RealTimePoll.Domain.Entities;
 using RealTimePoll.Domain.Interfaces;
+using RealTimePoll.Infrastructure.Identity;
 using RealTimePoll.Infrastructure.Persistence.Context;
 using RealTimePoll.Infrastructure.Persistence.Repositories;
 using RealTimePoll.Infrastructure.Services;
@@ -19,13 +19,15 @@ public static class InfrastructureServiceRegistration
     public static IServiceCollection AddInfrastructureServices(
         this IServiceCollection services, IConfiguration config)
     {
-        // DbContext
+        // ── DbContext ─────────────────────────────────────────────────────────
         services.AddDbContext<AppDbContext>(options =>
-            options.UseSqlServer(config.GetConnectionString("DefaultConnection"),
-                sql => sql.MigrationsAssembly(typeof(InfrastructureServiceRegistration).Assembly.FullName)));
+            options.UseSqlServer(
+                config.GetConnectionString("DefaultConnection"),
+                sql => sql.MigrationsAssembly(typeof(InfrastructureServiceRegistration).Assembly.FullName)
+            ));
 
-        // Identity
-        services.AddIdentity<AppUser, IdentityRole<Guid>>(options =>
+        // ── Identity ──────────────────────────────────────────────────────────
+        services.AddIdentity<AppIdentityUser, IdentityRole<Guid>>(options =>
         {
             options.Password.RequireDigit = true;
             options.Password.RequireLowercase = true;
@@ -35,12 +37,12 @@ public static class InfrastructureServiceRegistration
             options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(15);
             options.Lockout.MaxFailedAccessAttempts = 5;
             options.User.RequireUniqueEmail = true;
-            options.SignIn.RequireConfirmedEmail = false; // Set true in production
+            options.SignIn.RequireConfirmedEmail = false;
         })
         .AddEntityFrameworkStores<AppDbContext>()
         .AddDefaultTokenProviders();
 
-        // JWT
+        // ── JWT ───────────────────────────────────────────────────────────────
         var jwtKey = config["Jwt:SecretKey"]
             ?? throw new InvalidOperationException("Jwt:SecretKey is not configured");
 
@@ -63,7 +65,7 @@ public static class InfrastructureServiceRegistration
                 ClockSkew = TimeSpan.Zero
             };
 
-            // SignalR JWT support
+            // SignalR JWT support (token from query string)
             options.Events = new JwtBearerEvents
             {
                 OnMessageReceived = context =>
@@ -77,11 +79,12 @@ public static class InfrastructureServiceRegistration
             };
         });
 
-        // Repositories & UoW
+        // ── Repositories & UoW ────────────────────────────────────────────────
         services.AddScoped<IUnitOfWork, UnitOfWork>();
 
-        // Services
-        services.AddScoped<ITokenService, TokenService>();
+        // ── Application Services ──────────────────────────────────────────────
+        services.AddScoped<TokenService>();          // concrete — used by AuthService
+        services.AddScoped<ITokenService>(sp => sp.GetRequiredService<TokenService>()); // interface alias
         services.AddScoped<IEmailService, EmailService>();
         services.AddScoped<IAuthService, AuthService>();
         services.AddScoped<IPollService, PollService>();

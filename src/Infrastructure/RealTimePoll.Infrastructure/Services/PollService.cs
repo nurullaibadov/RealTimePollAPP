@@ -5,6 +5,7 @@ using RealTimePoll.Application.Interfaces;
 using RealTimePoll.Domain.Entities;
 using RealTimePoll.Domain.Enums;
 using RealTimePoll.Domain.Interfaces;
+using RealTimePoll.Infrastructure.Identity;
 using RealTimePoll.Infrastructure.Persistence.Context;
 
 namespace RealTimePoll.Infrastructure.Services;
@@ -13,9 +14,9 @@ public class PollService : IPollService
 {
     private readonly IUnitOfWork _uow;
     private readonly AppDbContext _context;
-    private readonly UserManager<AppUser> _userManager;
+    private readonly UserManager<AppIdentityUser> _userManager;
 
-    public PollService(IUnitOfWork uow, AppDbContext context, UserManager<AppUser> userManager)
+    public PollService(IUnitOfWork uow, AppDbContext context, UserManager<AppIdentityUser> userManager)
     {
         _uow = uow;
         _context = context;
@@ -116,10 +117,15 @@ public class PollService : IPollService
     {
         var poll = await _context.Polls
             .Include(p => p.Options)
-            .Include(p => p.CreatedByUser)
             .FirstOrDefaultAsync(p => p.Id == pollId && !p.IsDeleted);
 
-        return poll == null ? null : MapToResponse(poll);
+        if (poll == null) return null;
+
+        // Get creator name from Identity
+        var creator = await _userManager.FindByIdAsync(poll.CreatedByUserId.ToString());
+        var creatorName = creator?.FullName ?? "Unknown";
+
+        return MapToResponse(poll, creatorName);
     }
 
     public async Task<PagedResult<PollSummaryResponse>> GetPollsAsync(PollFilterRequest filter)
@@ -138,10 +144,6 @@ public class PollService : IPollService
 
         if (filter.IsActive.HasValue)
             query = query.Where(p => p.IsActive == filter.IsActive.Value);
-
-        // Auto-update status based on time
-        var now = DateTime.UtcNow;
-        query = query.Where(p => !p.IsDeleted);
 
         var total = await query.CountAsync();
 
@@ -186,7 +188,6 @@ public class PollService : IPollService
     {
         var poll = await _uow.Polls.GetByIdAsync(pollId)
             ?? throw new KeyNotFoundException("Anket bulunamadı.");
-
         poll.Status = PollStatus.Active;
         poll.IsActive = true;
         _uow.Polls.Update(poll);
@@ -197,7 +198,6 @@ public class PollService : IPollService
     {
         var poll = await _uow.Polls.GetByIdAsync(pollId)
             ?? throw new KeyNotFoundException("Anket bulunamadı.");
-
         poll.Status = PollStatus.Closed;
         poll.IsActive = false;
         _uow.Polls.Update(poll);
@@ -224,7 +224,7 @@ public class PollService : IPollService
         );
     }
 
-    private static PollResponse MapToResponse(Poll poll)
+    private static PollResponse MapToResponse(Poll poll, string creatorName)
     {
         var options = poll.Options
             .Where(o => !o.IsDeleted)
@@ -239,8 +239,7 @@ public class PollService : IPollService
             poll.StartsAt, poll.EndsAt,
             poll.IsActive, poll.AllowMultipleVotes, poll.IsAnonymous,
             poll.Status, poll.ThumbnailUrl, poll.TotalVotes,
-            poll.CreatedByUser?.FullName ?? "Unknown",
-            poll.CreatedAt, options
+            creatorName, poll.CreatedAt, options
         );
     }
 

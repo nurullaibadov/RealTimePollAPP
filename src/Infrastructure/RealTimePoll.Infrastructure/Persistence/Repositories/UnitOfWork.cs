@@ -13,7 +13,6 @@ public class UnitOfWork : IUnitOfWork
     private IGenericRepository<Poll>? _polls;
     private IGenericRepository<PollOption>? _pollOptions;
     private IGenericRepository<Vote>? _votes;
-    private IGenericRepository<RefreshToken>? _refreshTokens;
 
     public UnitOfWork(AppDbContext context) => _context = context;
 
@@ -26,11 +25,7 @@ public class UnitOfWork : IUnitOfWork
     public IGenericRepository<Vote> Votes
         => _votes ??= new GenericRepository<Vote>(_context);
 
-    public IGenericRepository<RefreshToken> RefreshTokens
-        => _refreshTokens ??= new GenericRepository<RefreshToken>(_context);
-
-    public Task<int> SaveChangesAsync()
-        => _context.SaveChangesAsync();
+    public Task<int> SaveChangesAsync() => _context.SaveChangesAsync();
 
     public async Task BeginTransactionAsync()
         => _transaction = await _context.Database.BeginTransactionAsync();

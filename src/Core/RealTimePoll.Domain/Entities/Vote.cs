@@ -11,5 +11,5 @@ public class Vote : BaseEntity
     // Navigation
     public Poll Poll { get; set; } = null!;
     public PollOption PollOption { get; set; } = null!;
-    public AppUser? User { get; set; }
+    // User navigation intentionally omitted — AppUser lives in Domain without Identity
 }

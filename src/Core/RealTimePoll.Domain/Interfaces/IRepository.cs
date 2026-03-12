@@ -23,7 +23,7 @@ public interface IUnitOfWork : IDisposable
     IGenericRepository<Poll> Polls { get; }
     IGenericRepository<PollOption> PollOptions { get; }
     IGenericRepository<Vote> Votes { get; }
-    IGenericRepository<RefreshToken> RefreshTokens { get; }
+    // RefreshToken is managed by Infrastructure.Identity layer directly
     Task<int> SaveChangesAsync();
     Task BeginTransactionAsync();
     Task CommitTransactionAsync();

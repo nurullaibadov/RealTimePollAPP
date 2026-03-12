@@ -4,29 +4,29 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using RealTimePoll.Application.DTOs.Auth;
 using RealTimePoll.Application.Interfaces;
-using RealTimePoll.Domain.Entities;
-using RealTimePoll.Domain.Interfaces;
+using RealTimePoll.Infrastructure.Identity;
+using RealTimePoll.Infrastructure.Persistence.Context;
 
 namespace RealTimePoll.Infrastructure.Services;
 
 public class AuthService : IAuthService
 {
-    private readonly UserManager<AppUser> _userManager;
-    private readonly SignInManager<AppUser> _signInManager;
+    private readonly UserManager<AppIdentityUser> _userManager;
+    private readonly SignInManager<AppIdentityUser> _signInManager;
     private readonly RoleManager<IdentityRole<Guid>> _roleManager;
-    private readonly ITokenService _tokenService;
+    private readonly TokenService _tokenService;
     private readonly IEmailService _emailService;
-    private readonly IUnitOfWork _uow;
+    private readonly AppDbContext _context;
     private readonly IConfiguration _config;
     private readonly ILogger<AuthService> _logger;
 
     public AuthService(
-        UserManager<AppUser> userManager,
-        SignInManager<AppUser> signInManager,
+        UserManager<AppIdentityUser> userManager,
+        SignInManager<AppIdentityUser> signInManager,
         RoleManager<IdentityRole<Guid>> roleManager,
-        ITokenService tokenService,
+        TokenService tokenService,
         IEmailService emailService,
-        IUnitOfWork uow,
+        AppDbContext context,
         IConfiguration config,
         ILogger<AuthService> logger)
     {
@@ -35,7 +35,7 @@ public class AuthService : IAuthService
         _roleManager = roleManager;
         _tokenService = tokenService;
         _emailService = emailService;
-        _uow = uow;
+        _context = context;
         _config = config;
         _logger = logger;
     }
@@ -46,7 +46,7 @@ public class AuthService : IAuthService
         if (existingUser != null)
             throw new InvalidOperationException("Bu e-posta adresi zaten kayıtlı.");
 
-        var user = new AppUser
+        var user = new AppIdentityUser
         {
             FirstName = request.FirstName,
             LastName = request.LastName,
@@ -62,13 +62,11 @@ public class AuthService : IAuthService
             throw new InvalidOperationException($"Kayıt başarısız: {errors}");
         }
 
-        // Assign default role
         if (!await _roleManager.RoleExistsAsync("User"))
             await _roleManager.CreateAsync(new IdentityRole<Guid>("User"));
 
         await _userManager.AddToRoleAsync(user, "User");
 
-        // Send confirmation email
         var token = await _userManager.GenerateEmailConfirmationTokenAsync(user);
         var baseUrl = _config["App:BaseUrl"] ?? "http://localhost:5000";
         var confirmLink = $"{baseUrl}/api/auth/confirm-email?userId={user.Id}&token={Uri.EscapeDataString(token)}";
@@ -80,12 +78,7 @@ public class AuthService : IAuthService
         var accessToken = _tokenService.GenerateAccessToken(user, roles);
         var refreshToken = await _tokenService.GenerateRefreshTokenAsync(user, "register", "register");
 
-        return new AuthResponse(
-            accessToken,
-            refreshToken,
-            DateTime.UtcNow.AddMinutes(60),
-            MapToProfile(user, roles)
-        );
+        return new AuthResponse(accessToken, refreshToken, DateTime.UtcNow.AddMinutes(60), MapToProfile(user, roles));
     }
 
     public async Task<AuthResponse> LoginAsync(LoginRequest request, string ipAddress, string userAgent)
@@ -101,22 +94,18 @@ public class AuthService : IAuthService
         if (!result.Succeeded)
         {
             if (result.IsLockedOut)
-                throw new UnauthorizedAccessException("Hesabınız geçici olarak kilitlendi. Lütfen daha sonra tekrar deneyin.");
+                throw new UnauthorizedAccessException("Hesabınız geçici olarak kilitlendi.");
             throw new UnauthorizedAccessException("E-posta veya şifre hatalı.");
         }
 
         var roles = await _userManager.GetRolesAsync(user);
         var accessToken = _tokenService.GenerateAccessToken(user, roles);
         var refreshToken = await _tokenService.GenerateRefreshTokenAsync(user, ipAddress, userAgent);
+        var expiryMinutes = Convert.ToDouble(_config["Jwt:AccessTokenExpiryMinutes"] ?? "60");
 
         _logger.LogInformation("User logged in: {Email} from {IP}", user.Email, ipAddress);
 
-        return new AuthResponse(
-            accessToken,
-            refreshToken,
-            DateTime.UtcNow.AddMinutes(Convert.ToDouble(_config["Jwt:AccessTokenExpiryMinutes"] ?? "60")),
-            MapToProfile(user, roles)
-        );
+        return new AuthResponse(accessToken, refreshToken, DateTime.UtcNow.AddMinutes(expiryMinutes), MapToProfile(user, roles));
     }
 
     public async Task<AuthResponse> RefreshTokenAsync(RefreshTokenRequest request, string ipAddress)
@@ -129,48 +118,43 @@ public class AuthService : IAuthService
         if (user == null)
             throw new UnauthorizedAccessException("Kullanıcı bulunamadı.");
 
-        var storedToken = await _uow.RefreshTokens.FirstOrDefaultAsync(
-            t => t.Token == request.RefreshToken && t.UserId == user.Id);
+        var storedToken = await _context.RefreshTokens
+            .FirstOrDefaultAsync(t => t.Token == request.RefreshToken && t.UserId == user.Id);
 
         if (storedToken == null || !storedToken.IsActive)
             throw new UnauthorizedAccessException("Geçersiz veya süresi dolmuş refresh token.");
 
-        // Revoke old token
         storedToken.IsRevoked = true;
         storedToken.RevokedReason = "Replaced by new token";
-        _uow.RefreshTokens.Update(storedToken);
+        _context.RefreshTokens.Update(storedToken);
 
         var roles = await _userManager.GetRolesAsync(user);
         var newAccessToken = _tokenService.GenerateAccessToken(user, roles);
         var newRefreshToken = await _tokenService.GenerateRefreshTokenAsync(user, ipAddress, "refresh");
-        await _uow.SaveChangesAsync();
+        await _context.SaveChangesAsync();
 
-        return new AuthResponse(
-            newAccessToken,
-            newRefreshToken,
-            DateTime.UtcNow.AddMinutes(Convert.ToDouble(_config["Jwt:AccessTokenExpiryMinutes"] ?? "60")),
-            MapToProfile(user, roles)
-        );
+        var expiryMinutes = Convert.ToDouble(_config["Jwt:AccessTokenExpiryMinutes"] ?? "60");
+        return new AuthResponse(newAccessToken, newRefreshToken, DateTime.UtcNow.AddMinutes(expiryMinutes), MapToProfile(user, roles));
     }
 
     public async Task RevokeTokenAsync(RevokeTokenRequest request, Guid userId)
     {
-        var token = await _uow.RefreshTokens.FirstOrDefaultAsync(
-            t => t.Token == request.RefreshToken && t.UserId == userId);
+        var token = await _context.RefreshTokens
+            .FirstOrDefaultAsync(t => t.Token == request.RefreshToken && t.UserId == userId);
 
         if (token == null || !token.IsActive)
             throw new InvalidOperationException("Token bulunamadı veya zaten geçersiz.");
 
         token.IsRevoked = true;
         token.RevokedReason = "User logout";
-        _uow.RefreshTokens.Update(token);
-        await _uow.SaveChangesAsync();
+        _context.RefreshTokens.Update(token);
+        await _context.SaveChangesAsync();
     }
 
     public async Task ForgotPasswordAsync(ForgotPasswordRequest request)
     {
         var user = await _userManager.FindByEmailAsync(request.Email);
-        if (user == null) return; // Security: don't reveal if email exists
+        if (user == null) return;
 
         var token = await _userManager.GeneratePasswordResetTokenAsync(user);
         var frontendUrl = _config["App:FrontendUrl"] ?? "http://localhost:3000";
@@ -182,9 +166,8 @@ public class AuthService : IAuthService
 
     public async Task ResetPasswordAsync(ResetPasswordRequest request)
     {
-        var user = await _userManager.FindByEmailAsync(request.Email);
-        if (user == null)
-            throw new InvalidOperationException("Kullanıcı bulunamadı.");
+        var user = await _userManager.FindByEmailAsync(request.Email)
+            ?? throw new InvalidOperationException("Kullanıcı bulunamadı.");
 
         var result = await _userManager.ResetPasswordAsync(user, request.Token, request.NewPassword);
         if (!result.Succeeded)
@@ -193,22 +176,22 @@ public class AuthService : IAuthService
             throw new InvalidOperationException($"Şifre sıfırlama başarısız: {errors}");
         }
 
-        // Revoke all refresh tokens on password reset
-        var tokens = await _uow.RefreshTokens.FindAsync(t => t.UserId == user.Id && !t.IsRevoked);
+        var tokens = await _context.RefreshTokens
+            .Where(t => t.UserId == user.Id && !t.IsRevoked)
+            .ToListAsync();
+
         foreach (var t in tokens)
         {
             t.IsRevoked = true;
             t.RevokedReason = "Password reset";
-            _uow.RefreshTokens.Update(t);
         }
-        await _uow.SaveChangesAsync();
+        await _context.SaveChangesAsync();
     }
 
     public async Task ChangePasswordAsync(ChangePasswordRequest request, Guid userId)
     {
-        var user = await _userManager.FindByIdAsync(userId.ToString());
-        if (user == null)
-            throw new InvalidOperationException("Kullanıcı bulunamadı.");
+        var user = await _userManager.FindByIdAsync(userId.ToString())
+            ?? throw new InvalidOperationException("Kullanıcı bulunamadı.");
 
         var result = await _userManager.ChangePasswordAsync(user, request.CurrentPassword, request.NewPassword);
         if (!result.Succeeded)
@@ -220,9 +203,8 @@ public class AuthService : IAuthService
 
     public async Task<UserProfileResponse> GetProfileAsync(Guid userId)
     {
-        var user = await _userManager.FindByIdAsync(userId.ToString());
-        if (user == null)
-            throw new InvalidOperationException("Kullanıcı bulunamadı.");
+        var user = await _userManager.FindByIdAsync(userId.ToString())
+            ?? throw new InvalidOperationException("Kullanıcı bulunamadı.");
 
         var roles = await _userManager.GetRolesAsync(user);
         return MapToProfile(user, roles);
@@ -230,9 +212,8 @@ public class AuthService : IAuthService
 
     public async Task<UserProfileResponse> UpdateProfileAsync(UpdateProfileRequest request, Guid userId)
     {
-        var user = await _userManager.FindByIdAsync(userId.ToString());
-        if (user == null)
-            throw new InvalidOperationException("Kullanıcı bulunamadı.");
+        var user = await _userManager.FindByIdAsync(userId.ToString())
+            ?? throw new InvalidOperationException("Kullanıcı bulunamadı.");
 
         user.FirstName = request.FirstName;
         user.LastName = request.LastName;
@@ -269,7 +250,7 @@ public class AuthService : IAuthService
         await _emailService.SendEmailConfirmationAsync(user.Email!, user.FullName, confirmLink);
     }
 
-    private static UserProfileResponse MapToProfile(AppUser user, IList<string> roles)
+    private static UserProfileResponse MapToProfile(AppIdentityUser user, IList<string> roles)
         => new(user.Id, user.FirstName, user.LastName, user.Email ?? "",
                user.FullName, user.ProfileImageUrl, roles, user.CreatedAt);
 }

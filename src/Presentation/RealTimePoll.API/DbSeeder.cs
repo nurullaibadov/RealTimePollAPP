@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using RealTimePoll.Domain.Entities;
 using RealTimePoll.Domain.Enums;
+using RealTimePoll.Infrastructure.Identity;
 using RealTimePoll.Infrastructure.Persistence.Context;
 
 public static class DbSeeder
@@ -9,12 +10,11 @@ public static class DbSeeder
     public static async Task SeedAsync(IServiceProvider services)
     {
         var context = services.GetRequiredService<AppDbContext>();
-        var userManager = services.GetRequiredService<UserManager<AppUser>>();
+        var userManager = services.GetRequiredService<UserManager<AppIdentityUser>>();
         var roleManager = services.GetRequiredService<RoleManager<IdentityRole<Guid>>>();
 
         await context.Database.MigrateAsync();
 
-        // Seed Roles
         string[] roles = ["SuperAdmin", "Admin", "User"];
         foreach (var role in roles)
         {
@@ -22,11 +22,10 @@ public static class DbSeeder
                 await roleManager.CreateAsync(new IdentityRole<Guid>(role));
         }
 
-        // Seed SuperAdmin
         const string adminEmail = "admin@realtimepoll.com";
         if (await userManager.FindByEmailAsync(adminEmail) == null)
         {
-            var adminUser = new AppUser
+            var adminUser = new AppIdentityUser
             {
                 FirstName = "Super",
                 LastName = "Admin",
@@ -42,7 +41,6 @@ public static class DbSeeder
                 await userManager.AddToRoleAsync(adminUser, "SuperAdmin");
                 await userManager.AddToRoleAsync(adminUser, "Admin");
 
-                // Seed demo polls
                 var poll1 = new Poll
                 {
                     Title = "En sevdiğiniz programlama dili nedir?",

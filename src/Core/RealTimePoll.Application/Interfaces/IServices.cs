@@ -1,7 +1,6 @@
 using RealTimePoll.Application.DTOs.Auth;
 using RealTimePoll.Application.DTOs.Poll;
 using RealTimePoll.Application.DTOs.Vote;
-using RealTimePoll.Domain.Entities;
 
 namespace RealTimePoll.Application.Interfaces;
 
@@ -48,10 +47,14 @@ public interface IEmailService
     Task SendPollResultsAsync(string toEmail, string userName, VoteResultResponse results);
 }
 
+/// <summary>
+/// ITokenService uses object for user to keep Application layer free of Infrastructure types.
+/// Actual implementation in Infrastructure uses AppIdentityUser.
+/// </summary>
 public interface ITokenService
 {
-    string GenerateAccessToken(AppUser user, IList<string> roles);
-    Task<string> GenerateRefreshTokenAsync(AppUser user, string ipAddress, string userAgent);
-    Guid? GetUserIdFromExpiredToken(string token);
+    // These are called with dynamic dispatch from AuthService (Infrastructure)
+    // The string overloads allow Application layer to stay decoupled
     bool ValidateToken(string token);
+    Guid? GetUserIdFromExpiredToken(string token);
 }

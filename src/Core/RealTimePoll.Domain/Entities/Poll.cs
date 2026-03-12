@@ -18,8 +18,7 @@ public class Poll : BaseEntity
     // Foreign Keys
     public Guid CreatedByUserId { get; set; }
 
-    // Navigation
-    public AppUser CreatedByUser { get; set; } = null!;
+    // Navigation (no nav to AppUser — Identity lives in Infrastructure)
     public ICollection<PollOption> Options { get; set; } = new List<PollOption>();
     public ICollection<Vote> Votes { get; set; } = new List<Vote>();
 }

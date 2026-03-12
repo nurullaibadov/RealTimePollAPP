@@ -1,8 +1,8 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.IdentityModel.Tokens;
 using RealTimePoll.Application.Interfaces;
-using RealTimePoll.Domain.Entities;
-using RealTimePoll.Domain.Interfaces;
+using RealTimePoll.Infrastructure.Identity;
+using RealTimePoll.Infrastructure.Persistence.Context;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Security.Cryptography;
@@ -13,23 +13,23 @@ namespace RealTimePoll.Infrastructure.Services;
 public class TokenService : ITokenService
 {
     private readonly IConfiguration _config;
-    private readonly IUnitOfWork _uow;
+    private readonly AppDbContext _context;
 
-    public TokenService(IConfiguration config, IUnitOfWork uow)
+    public TokenService(IConfiguration config, AppDbContext context)
     {
         _config = config;
-        _uow = uow;
+        _context = context;
     }
 
-    public string GenerateAccessToken(AppUser user, IList<string> roles)
+    public string GenerateAccessToken(AppIdentityUser user, IList<string> roles)
     {
         var claims = new List<Claim>
         {
-            new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()),
-            new Claim(ClaimTypes.Email, user.Email ?? string.Empty),
-            new Claim(ClaimTypes.GivenName, user.FirstName),
-            new Claim(ClaimTypes.Surname, user.LastName),
-            new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
+            new(ClaimTypes.NameIdentifier, user.Id.ToString()),
+            new(ClaimTypes.Email, user.Email ?? string.Empty),
+            new(ClaimTypes.GivenName, user.FirstName),
+            new(ClaimTypes.Surname, user.LastName),
+            new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
         };
 
         foreach (var role in roles)
@@ -39,7 +39,8 @@ public class TokenService : ITokenService
             _config["Jwt:SecretKey"] ?? throw new InvalidOperationException("JWT Secret not configured")));
 
         var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
-        var expiry = DateTime.UtcNow.AddMinutes(Convert.ToDouble(_config["Jwt:AccessTokenExpiryMinutes"] ?? "60"));
+        var expiry = DateTime.UtcNow.AddMinutes(
+            Convert.ToDouble(_config["Jwt:AccessTokenExpiryMinutes"] ?? "60"));
 
         var token = new JwtSecurityToken(
             issuer: _config["Jwt:Issuer"],
@@ -52,12 +53,13 @@ public class TokenService : ITokenService
         return new JwtSecurityTokenHandler().WriteToken(token);
     }
 
-    public async Task<string> GenerateRefreshTokenAsync(AppUser user, string ipAddress, string userAgent)
+    public async Task<string> GenerateRefreshTokenAsync(
+        AppIdentityUser user, string ipAddress, string userAgent)
     {
         var token = Convert.ToBase64String(RandomNumberGenerator.GetBytes(64));
         var expiryDays = Convert.ToInt32(_config["Jwt:RefreshTokenExpiryDays"] ?? "7");
 
-        var refreshToken = new RefreshToken
+        var refreshToken = new AppIdentityRefreshToken
         {
             Token = token,
             UserId = user.Id,
@@ -66,8 +68,8 @@ public class TokenService : ITokenService
             UserAgent = userAgent
         };
 
-        await _uow.RefreshTokens.AddAsync(refreshToken);
-        await _uow.SaveChangesAsync();
+        await _context.RefreshTokens.AddAsync(refreshToken);
+        await _context.SaveChangesAsync();
 
         return token;
     }
@@ -85,7 +87,7 @@ public class TokenService : ITokenService
                 IssuerSigningKey = new SymmetricSecurityKey(key),
                 ValidateIssuer = false,
                 ValidateAudience = false,
-                ValidateLifetime = false  // expired token is okay here
+                ValidateLifetime = false
             }, out _);
 
             var userIdClaim = principal.FindFirst(ClaimTypes.NameIdentifier);
@@ -116,9 +118,6 @@ public class TokenService : ITokenService
             }, out _);
             return true;
         }
-        catch
-        {
-            return false;
-        }
+        catch { return false; }
     }
 }
